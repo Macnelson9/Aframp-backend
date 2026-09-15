@@ -27,7 +27,7 @@ pub async fn signup(
     let user = sqlx::query_as::<_, User>(
         "INSERT INTO users (email, password_hash, name)
          VALUES ($1, $2, $3)
-         RETURNING id, email, password_hash, name, created_at, updated_at",
+         RETURNING id, email, password_hash, name, is_admin, created_at, updated_at",
     )
     .bind(email)
     .bind(&password_hash)
@@ -67,7 +67,7 @@ fn is_unique_violation(err: &sqlx::Error) -> bool {
 
 pub async fn login(db: &PgPool, email: &str, password_raw: &str) -> Result<(User, Option<Merchant>), UserError> {
     let user = sqlx::query_as::<_, User>(
-        "SELECT id, email, password_hash, name, created_at, updated_at FROM users WHERE email = $1",
+        "SELECT id, email, password_hash, name, is_admin, created_at, updated_at FROM users WHERE email = $1",
     )
     .bind(email)
     .fetch_optional(db)
@@ -90,7 +90,7 @@ pub async fn login(db: &PgPool, email: &str, password_raw: &str) -> Result<(User
 
 pub async fn user_by_id(db: &PgPool, user_id: uuid::Uuid) -> Result<Option<User>, sqlx::Error> {
     sqlx::query_as::<_, User>(
-        "SELECT id, email, password_hash, name, created_at, updated_at FROM users WHERE id = $1",
+        "SELECT id, email, password_hash, name, is_admin, created_at, updated_at FROM users WHERE id = $1",
     )
     .bind(user_id)
     .fetch_optional(db)

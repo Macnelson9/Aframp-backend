@@ -68,6 +68,17 @@ pub fn router(state: AppState) -> axum::Router {
             "/payment-requests/{id}",
             axum::routing::get(api::payment_requests::get),
         )
+        .route("/admin", axum::routing::get(api::admin::dashboard))
+        .route("/admin/overview", axum::routing::get(api::admin::overview))
+        .route("/admin/merchants", axum::routing::get(api::admin::merchants))
+        .route("/admin/users", axum::routing::get(api::admin::users))
+        .route("/admin/wallets", axum::routing::get(api::admin::wallets))
+        .route("/admin/transactions", axum::routing::get(api::admin::transactions))
+        .route("/admin/withdrawals", axum::routing::get(api::admin::withdrawals))
+        .route(
+            "/admin/payment-requests",
+            axum::routing::get(api::admin::payment_requests),
+        )
         .with_state(state)
         .layer(axum::middleware::from_fn(middleware::require_json_content_type))
 }

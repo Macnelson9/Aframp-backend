@@ -18,6 +18,7 @@ pub enum ErrorCode {
     MerchantNotFound,
     WalletNotFound,
     PaymentRequestNotFound,
+    Forbidden,
     InternalError,
 }
 
@@ -41,6 +42,7 @@ impl ErrorCode {
             ErrorCode::MerchantNotFound => "MERCHANT_NOT_FOUND",
             ErrorCode::WalletNotFound => "WALLET_NOT_FOUND",
             ErrorCode::PaymentRequestNotFound => "PAYMENT_REQUEST_NOT_FOUND",
+            ErrorCode::Forbidden => "FORBIDDEN",
             ErrorCode::InternalError => "INTERNAL_ERROR",
         }
     }
@@ -49,6 +51,7 @@ impl ErrorCode {
 #[derive(Serialize)]
 pub struct ApiError {
     pub error: String,
+    pub code: ErrorCode,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub field: Option<String>,
 }
@@ -66,25 +69,30 @@ pub fn bad_request_field(field: &str, message: &str) -> (StatusCode, Json<ApiErr
         StatusCode::BAD_REQUEST,
         Json(ApiError {
             error: message.into(),
+            code: ErrorCode::InvalidParameters,
             field: Some(field.into()),
         }),
     )
 }
 
-pub fn conflict(message: &str) -> (StatusCode, Json<ApiError>) {
-    error(StatusCode::CONFLICT, message)
+pub fn conflict(code: ErrorCode, message: &str) -> (StatusCode, Json<ApiError>) {
+    error(StatusCode::CONFLICT, code, message)
 }
 
 pub fn not_found(code: ErrorCode, message: &str) -> (StatusCode, Json<ApiError>) {
     error(StatusCode::NOT_FOUND, code, message)
 }
 
-pub fn unsupported_media_type(message: &str) -> (StatusCode, Json<ApiError>) {
-    error(StatusCode::UNSUPPORTED_MEDIA_TYPE, message)
+pub fn unsupported_media_type(code: ErrorCode, message: &str) -> (StatusCode, Json<ApiError>) {
+    error(StatusCode::UNSUPPORTED_MEDIA_TYPE, code, message)
 }
 
-pub fn unauthorized(message: &str) -> (StatusCode, Json<ApiError>) {
-    error(StatusCode::UNAUTHORIZED, message)
+pub fn unauthorized(code: ErrorCode, message: &str) -> (StatusCode, Json<ApiError>) {
+    error(StatusCode::UNAUTHORIZED, code, message)
+}
+
+pub fn forbidden(code: ErrorCode, message: &str) -> (StatusCode, Json<ApiError>) {
+    error(StatusCode::FORBIDDEN, code, message)
 }
 
 pub fn bad_gateway(code: ErrorCode, message: &str) -> (StatusCode, Json<ApiError>) {
@@ -105,6 +113,7 @@ fn error(status: StatusCode, code: ErrorCode, message: &str) -> (StatusCode, Jso
         status,
         Json(ApiError {
             error: message.into(),
+            code,
             field: None,
         }),
     )

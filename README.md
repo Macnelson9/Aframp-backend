@@ -200,6 +200,9 @@ Authenticated routes accept either the `aframp_session` HttpOnly cookie (set by 
 | `POST` | `/withdraw` | ✅ | Debit available balance, record a withdrawal, and call Paystack Transfers. Body: `{ amount_stroops, asset? (cNGN only), bank_code, account_number }`. **Note:** the Paystack call is real, but nothing actually pays out yet — Paystack's own account balance is unfunded (Stage A gap) — see [Status](#status-real-progress-not-aspiration) |
 | `GET` | `/withdrawals?limit=` | ✅ | List the merchant's withdrawals, including `failure_reason` on failed ones |
 | `GET` | `/health` | — | Liveness check (`204 No Content`) |
+| `GET` | `/admin` | — | Static admin dashboard shell (see [Admin access](#admin-access) below) |
+| `GET` | `/admin/overview` | 🔒 admin | Counts + balances/status breakdowns across every merchant |
+| `GET` | `/admin/merchants`, `/admin/users`, `/admin/wallets`, `/admin/transactions`, `/admin/withdrawals`, `/admin/payment-requests` | 🔒 admin | System-wide list views (`?limit=`, default 100, max 500), each joined with owner/merchant context |
 
 `/signup` and `/login` both return:
 
@@ -208,6 +211,16 @@ Authenticated routes accept either the `aframp_session` HttpOnly cookie (set by 
 ```
 
 …alongside a `Set-Cookie: aframp_session=<jwt>; HttpOnly; Path=/; SameSite=Lax; Max-Age=86400; Secure`. A browser frontend should use the cookie and ignore the `token` field — copying it into `localStorage` puts the session within reach of any XSS on the page.
+
+### Admin access
+
+There's no self-service way to become an admin — flag a user directly in Postgres:
+
+```sql
+UPDATE users SET is_admin = true WHERE email = 'you@example.com';
+```
+
+The `is_admin` flag is baked into the JWT at login, so **re-login after flipping it** (or revoking it) — outstanding tokens keep whatever `is_admin` value they were signed with for up to 24h (`TOKEN_TTL_HOURS`). Then open `/admin` in a browser and sign in with that account; it's a static page that authenticates through the normal `/login` endpoint and rides the same session cookie as everything else, so there's nothing extra to configure.
 
 ## Deploying behind TLS
 

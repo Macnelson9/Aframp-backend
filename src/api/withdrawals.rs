@@ -3,7 +3,7 @@ use axum::Json;
 use serde::Deserialize;
 
 use crate::auth::extractor::AuthUser;
-use crate::error::{bad_gateway, bad_request, bad_request_field, internal, ApiResult};
+use crate::error::{bad_gateway, bad_request, bad_request_field, internal, ApiResult, ErrorCode};
 use crate::models::{CreateWithdrawalRequest, NewWithdrawal, Withdrawal};
 use crate::services::withdrawals::{self, WithdrawalError};
 use crate::validation::{is_valid_account_number, is_valid_bank_code};
@@ -21,7 +21,7 @@ pub async fn create(
 ) -> ApiResult<Json<Withdrawal>> {
     let merchant_id = auth
         .merchant_id
-        .ok_or_else(|| bad_request("no merchant associated with this account"))?;
+        .ok_or_else(|| bad_request(ErrorCode::MerchantNotFound, "no merchant associated with this account"))?;
     if req.amount_stroops <= 0 {
         return Err(bad_request_field(
             "amount_stroops",

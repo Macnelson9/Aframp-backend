@@ -1,3 +1,4 @@
+mod admin;
 mod api_key;
 mod balance;
 mod merchant;
@@ -7,6 +8,10 @@ mod user;
 mod wallet;
 mod withdrawal;
 
+pub use admin::{
+    AdminMerchantRow, AdminOverview, AdminPaymentRequestRow, AdminTransactionRow, AdminUserRow,
+    AdminWalletRow, AdminWithdrawalRow, AssetTotal, StatusCount,
+};
 pub use api_key::ApiKey;
 pub use balance::{Balance, UpdateBalance};
 pub use merchant::{Merchant, NewMerchant};

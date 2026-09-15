@@ -4,7 +4,7 @@ use axum::response::IntoResponse;
 use axum::Json;
 
 use crate::auth::jwt;
-use crate::error::{bad_request_field, internal, ApiResult};
+use crate::error::{bad_request_field, internal, ApiResult, ErrorCode};
 use crate::models::{AuthResponse, LoginRequest, SignupRequest};
 use crate::services::users::{self, UserError};
 use crate::validation::{is_valid_email, validate_name};
@@ -27,7 +27,7 @@ pub async fn signup(
     let (user, merchant) = users::signup(&state.db, &req.email, &req.password, &name)
         .await
         .map_err(map_user_error)?;
-    let token = jwt::sign(&state.jwt_secret, user.id, Some(merchant.id))
+    let token = jwt::sign(&state.jwt_secret, user.id, Some(merchant.id), user.is_admin)
         .map_err(internal)?;
     authenticated(
         &state,
@@ -49,8 +49,13 @@ pub async fn login(
     let (user, merchant) = users::login(&state.db, &req.email, &req.password)
         .await
         .map_err(map_user_error)?;
-    let token = jwt::sign(&state.jwt_secret, user.id, merchant.as_ref().map(|m| m.id))
-        .map_err(internal)?;
+    let token = jwt::sign(
+        &state.jwt_secret,
+        user.id,
+        merchant.as_ref().map(|m| m.id),
+        user.is_admin,
+    )
+    .map_err(internal)?;
     authenticated(
         &state,
         AuthResponse {

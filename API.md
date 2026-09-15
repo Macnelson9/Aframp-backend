@@ -66,6 +66,7 @@ Every error returns the same shape — a human-readable `error` string plus a st
 | `401` | Missing, malformed, or expired token | Redirect to login |
 | `404` | Resource not found | — |
 | `409` | Email already registered | Show on the signup form |
+| `403` | Authenticated, but not an admin (`/admin/*` only) | Not applicable to merchant-facing routes |
 | `502` | Upstream payment provider failed | Transient — the `error` carries the provider's own message |
 | `500` | Internal error | Generic `INTERNAL_ERROR`; details stay in server logs |
 
@@ -84,6 +85,7 @@ Every error returns the same shape — a human-readable `error` string plus a st
 | `WALLET_NOT_FOUND` | `400` | No wallet yet, or none created before a payment-request call |
 | `PAYMENT_REQUEST_NOT_FOUND` | `404` | Payment request id doesn't exist |
 | `PAYOUT_FAILED` | `502` | Upstream payment provider rejected the payout |
+| `FORBIDDEN` | `403` | Authenticated but not an admin, on an `/admin/*` route |
 | `INTERNAL_ERROR` | `500` | Unexpected server error; generic message only |
 
 ---
