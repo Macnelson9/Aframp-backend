@@ -19,6 +19,12 @@ pub enum ErrorCode {
     WalletNotFound,
     PaymentRequestNotFound,
     Forbidden,
+    PhoneTaken,
+    OtpInvalid,
+    OtpExpired,
+    OtpChallengeNotFound,
+    OtpLocked,
+    TooManyRequests,
     InternalError,
 }
 
@@ -43,6 +49,12 @@ impl ErrorCode {
             ErrorCode::WalletNotFound => "WALLET_NOT_FOUND",
             ErrorCode::PaymentRequestNotFound => "PAYMENT_REQUEST_NOT_FOUND",
             ErrorCode::Forbidden => "FORBIDDEN",
+            ErrorCode::PhoneTaken => "PHONE_TAKEN",
+            ErrorCode::OtpInvalid => "OTP_INVALID",
+            ErrorCode::OtpExpired => "OTP_EXPIRED",
+            ErrorCode::OtpChallengeNotFound => "OTP_CHALLENGE_NOT_FOUND",
+            ErrorCode::OtpLocked => "OTP_LOCKED",
+            ErrorCode::TooManyRequests => "TOO_MANY_REQUESTS",
             ErrorCode::InternalError => "INTERNAL_ERROR",
         }
     }
@@ -97,6 +109,10 @@ pub fn forbidden(code: ErrorCode, message: &str) -> (StatusCode, Json<ApiError>)
 
 pub fn bad_gateway(code: ErrorCode, message: &str) -> (StatusCode, Json<ApiError>) {
     error(StatusCode::BAD_GATEWAY, code, message)
+}
+
+pub fn too_many_requests(code: ErrorCode, message: &str) -> (StatusCode, Json<ApiError>) {
+    error(StatusCode::TOO_MANY_REQUESTS, code, message)
 }
 
 pub fn internal<E: std::fmt::Display>(err: E) -> (StatusCode, Json<ApiError>) {

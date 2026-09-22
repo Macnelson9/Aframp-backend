@@ -5,12 +5,13 @@ mod config;
 mod error;
 mod middleware;
 mod models;
+pub mod otp;
 pub mod payments;
 pub mod services;
 mod validation;
 
 pub use auth::cookie::{CookieConfig, SameSite};
-pub use config::{AppConfig, SecretString};
+pub use config::{AppConfig, OtpProviderKind, SecretString};
 
 use sqlx::{postgres::PgPoolOptions, PgPool};
 
@@ -21,6 +22,8 @@ pub struct AppState {
     pub webhook_secret: SecretString,
     pub wallet_encryption_key: std::sync::Arc<[u8; 32]>,
     pub payment_provider: std::sync::Arc<dyn payments::PaymentProvider>,
+    pub otp_provider: std::sync::Arc<dyn otp::OtpProvider>,
+    pub otp_hmac_secret: SecretString,
     pub cookie: CookieConfig,
 }
 
@@ -30,6 +33,21 @@ pub async fn build_state(config: &AppConfig) -> Result<AppState, Box<dyn std::er
         .connect(&config.database_url)
         .await?;
     let wallet_encryption_key = blockchain::wallet_crypto::parse_key(config.wallet_encryption_key.as_str())?;
+    let otp_provider: std::sync::Arc<dyn otp::OtpProvider> = match config.otp_provider {
+        OtpProviderKind::Termii => std::sync::Arc::new(otp::termii::TermiiProvider::new(
+            config
+                .termii_api_key
+                .as_ref()
+                .expect("TERMII_API_KEY is required when OTP_PROVIDER=termii")
+                .as_str()
+                .to_string(),
+            config
+                .termii_sender_id
+                .clone()
+                .expect("TERMII_SENDER_ID is required when OTP_PROVIDER=termii"),
+        )),
+        OtpProviderKind::Mock => std::sync::Arc::new(otp::mock::MockOtpProvider),
+    };
     Ok(AppState {
         db,
         jwt_secret: config.jwt_secret.clone(),
@@ -38,6 +56,8 @@ pub async fn build_state(config: &AppConfig) -> Result<AppState, Box<dyn std::er
         payment_provider: std::sync::Arc::new(payments::paystack::PaystackProvider::new(
             config.paystack_secret_key.as_str().to_string(),
         )),
+        otp_provider,
+        otp_hmac_secret: config.otp_hmac_secret.clone(),
         cookie: config.cookie,
     })
 }
@@ -51,6 +71,7 @@ pub fn router(state: AppState) -> axum::Router {
         )
         .route("/signup", axum::routing::post(api::auth::signup))
         .route("/login", axum::routing::post(api::auth::login))
+        .route("/verify-otp", axum::routing::post(api::auth::verify_otp))
         .route("/logout", axum::routing::post(api::auth::logout))
         .route("/me", axum::routing::get(api::me::get))
         .route("/wallet/create", axum::routing::post(api::wallets::create))
