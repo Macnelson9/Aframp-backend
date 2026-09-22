@@ -19,6 +19,11 @@ impl OtpProvider for MockOtpProvider {
             .insert(phone.to_string(), message.to_string());
         Ok(())
     }
+
+    /// No real signing in tests — a fixed sentinel stands in for "valid".
+    fn verify_webhook_signature(&self, _body: &[u8], signature: &str) -> bool {
+        signature == "mock-signature"
+    }
 }
 
 /// The message body most recently "sent" to `phone`, for tests to pull the

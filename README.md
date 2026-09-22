@@ -204,6 +204,7 @@ Authenticated routes accept either the `aframp_session` HttpOnly cookie (set by 
 | `GET` | `/admin` | — | Static admin dashboard shell (see [Admin access](#admin-access) below) |
 | `GET` | `/admin/overview` | 🔒 admin | Counts + balances/status breakdowns across every merchant |
 | `GET` | `/admin/merchants`, `/admin/users`, `/admin/wallets`, `/admin/transactions`, `/admin/withdrawals`, `/admin/payment-requests` | 🔒 admin | System-wide list views (`?limit=`, default 100, max 500), each joined with owner/merchant context |
+| `POST` | `/webhooks/termii` | 🔏 signed | Termii's SMS delivery-status callback — not for merchant/admin use, see [Termii webhook](#termii-webhook) below |
 
 `/verify-otp` — the only endpoint that ever issues a session — returns:
 
@@ -224,6 +225,12 @@ UPDATE users SET is_admin = true WHERE email = 'you@example.com';
 ```
 
 The `is_admin` flag is baked into the JWT at login, so **re-login after flipping it** (or revoking it) — outstanding tokens keep whatever `is_admin` value they were signed with for up to 24h (`TOKEN_TTL_HOURS`). Then open `/admin` in a browser and sign in with that account.
+
+### Termii webhook
+
+Register `https://<your-deployed-host>/webhooks/termii` at [termii.com/account/webhook/config](https://termii.com/account/webhook/config) — it's one account-wide setting, not something passed per API call. Termii POSTs SMS delivery-status events (`Delivered`, `Message Failed`, `Rejected`, etc. — see [their docs](https://developers.termii.com/events-and-reports)) there, signed with `X-Termii-Signature` (HMAC-SHA512). This endpoint verifies that signature and logs the event; it doesn't yet correlate a delivery status back to the `otp_challenges` row that sent it — that'd need the provider's `message_id` captured at send time and a column to hold it, which nothing does today.
+
+**Their docs don't say which secret signs the header** — "your secret key," unspecified. This verifies against `TERMII_API_KEY`, the only secret both sides are known to share. If real Termii traffic starts failing signature checks, that assumption is the first thing to check against the dashboard.
 
 **Known gap since OTP shipped:** the `/admin` page's login form only knows the old one-step `/login` → cookie flow. An admin account created *before* OTP existed (no `phone_number` on the row) still logs in through it fine. An admin account with a phone number now gets a challenge response back instead of a session, and the dashboard has no code-entry step to handle that — it'll appear to fail to log in. Until the dashboard is updated, keep your admin account phone-less, or drive `/login` → `/verify-otp` manually with `curl`/Postman and paste the resulting cookie in by hand.
 
