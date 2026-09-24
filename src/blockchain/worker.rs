@@ -9,7 +9,7 @@ use crate::services::{balances, payment_requests, payments, wallets};
 use crate::AppState;
 
 pub async fn run(state: Arc<AppState>, horizon_url: String, poll_interval_secs: u64) {
-    let listener = StellarListener { horizon_url };
+    let listener = StellarListener::new(horizon_url);
 
     loop {
         if let Err(err) = poll_once(&state.db, &listener).await {
@@ -102,17 +102,21 @@ async fn process_deposit(db: &PgPool, d: crate::blockchain::stellar::DetectedDep
             .await
             .map_err(|e| e.to_string())?
         {
-            if pr.amount_stroops != payment.amount_stroops {
+            if payment.amount_stroops >= pr.amount_stroops {
+                payment_requests::mark_paid(db, pr.id, payment.id)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            } else {
                 tracing::warn!(
                     expected = pr.amount_stroops,
                     actual = payment.amount_stroops,
                     request_id = %pr.id,
-                    "payment request amount mismatch — marking paid anyway"
+                    "payment request underpaid — marking partial"
                 );
+                payment_requests::mark_partial(db, pr.id, payment.id)
+                    .await
+                    .map_err(|e| e.to_string())?;
             }
-            payment_requests::mark_paid(db, pr.id, payment.id)
-                .await
-                .map_err(|e| e.to_string())?;
         }
     }
 
