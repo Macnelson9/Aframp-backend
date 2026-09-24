@@ -25,7 +25,7 @@ pub async fn list(
         .ok_or_else(|| bad_request(ErrorCode::MerchantNotFound, "no merchant associated with this account"))?;
     let limit = params.limit.unwrap_or(50).clamp(1, 200);
     let cursor = match params.cursor.as_deref() {
-        Some(raw) => Some(Cursor::decode(raw).ok_or_else(|| bad_request("invalid cursor"))?),
+        Some(raw) => Some(Cursor::decode(raw).ok_or_else(|| bad_request(ErrorCode::InvalidParameters, "invalid cursor"))?),
         None => None,
     };
     let payments = payments::payments_by_merchant_cursor(&state.db, merchant_id, limit, cursor)
