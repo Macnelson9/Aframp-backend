@@ -27,6 +27,21 @@ pub async fn create_withdrawal(
     provider: &dyn PaymentProvider,
     withdrawal: NewWithdrawal,
 ) -> Result<Withdrawal, WithdrawalError> {
+    create_withdrawal_idempotent(db, provider, withdrawal, None).await
+}
+
+/// Create a withdrawal, optionally guarded by an idempotency key.
+///
+/// When `idempotency_key` is `Some`, a retry that reuses the same key for the
+/// same merchant returns the previously created withdrawal instead of
+/// initiating a second payout. The key is persisted on the row so the lookup
+/// survives process restarts and concurrent retries.
+pub async fn create_withdrawal_idempotent(
+    db: &PgPool,
+    provider: &dyn PaymentProvider,
+    withdrawal: NewWithdrawal,
+    idempotency_key: Option<&str>,
+) -> Result<Withdrawal, WithdrawalError> {
     if withdrawal.asset != "cNGN" {
         return Err(WithdrawalError::UnsupportedAsset);
     }
@@ -34,6 +49,14 @@ pub async fn create_withdrawal(
         return Err(WithdrawalError::InvalidAmountPrecision);
     }
     let amount_kobo = withdrawal.amount_stroops / STROOPS_PER_KOBO;
+
+    // Fast path: if this key was already used by this merchant, return the
+    // existing withdrawal rather than creating a duplicate payout.
+    if let Some(key) = idempotency_key {
+        if let Some(existing) = find_by_idempotency_key(db, withdrawal.merchant_id, key).await? {
+            return Ok(existing);
+        }
+    }
 
     let mut tx = db.begin().await?;
 
@@ -56,20 +79,36 @@ pub async fn create_withdrawal(
 
     let w = sqlx::query_as::<_, Withdrawal>(
         "INSERT INTO withdrawals (
-             merchant_id, amount_stroops, asset, status, bank_code, account_number
+             merchant_id, amount_stroops, asset, status, bank_code, account_number,
+             idempotency_key
          )
-         VALUES ($1, $2, $3, 'pending', $4, $5)
+         VALUES ($1, $2, $3, 'pending', $4, $5, $6)
+         ON CONFLICT (merchant_id, idempotency_key) DO NOTHING
          RETURNING id, merchant_id, amount_stroops, asset, status, provider,
                    provider_reference, bank_code, account_number, failure_reason,
-                   created_at, updated_at",
+                   idempotency_key, created_at, updated_at",
     )
     .bind(withdrawal.merchant_id)
     .bind(withdrawal.amount_stroops)
     .bind(&withdrawal.asset)
     .bind(&withdrawal.bank_code)
     .bind(&withdrawal.account_number)
-    .fetch_one(&mut *tx)
+    .bind(idempotency_key)
+    .fetch_optional(&mut *tx)
     .await?;
+
+    // A concurrent retry with the same key won the insert race. Undo the debit
+    // we just made and return the row the other request created.
+    let w = match w {
+        Some(w) => w,
+        None => {
+            tx.rollback().await?;
+            let key = idempotency_key.expect("conflict only possible with a key");
+            return find_by_idempotency_key(db, withdrawal.merchant_id, key)
+                .await?
+                .ok_or(WithdrawalError::InsufficientBalance);
+        }
+    };
 
     // Commit the debit + pending row before ever calling out to Paystack. This
     // guarantees a durable record that the withdrawal was attempted regardless
@@ -98,7 +137,7 @@ pub async fn create_withdrawal(
                   WHERE id = $1
                   RETURNING id, merchant_id, amount_stroops, asset, status, provider,
                             provider_reference, bank_code, account_number, failure_reason,
-                            created_at, updated_at",
+                            idempotency_key, created_at, updated_at",
             )
             .bind(w.id)
             .bind(&result.provider)
@@ -141,6 +180,26 @@ pub async fn create_withdrawal(
     }
 }
 
+/// Look up a withdrawal previously created with the given idempotency key for
+/// this merchant. Returns `None` when the key has not been used yet.
+pub async fn find_by_idempotency_key(
+    db: &PgPool,
+    merchant_id: Uuid,
+    idempotency_key: &str,
+) -> Result<Option<Withdrawal>, sqlx::Error> {
+    sqlx::query_as::<_, Withdrawal>(
+        "SELECT id, merchant_id, amount_stroops, asset, status, provider,
+                provider_reference, bank_code, account_number, failure_reason,
+                idempotency_key, created_at, updated_at
+           FROM withdrawals
+          WHERE merchant_id = $1 AND idempotency_key = $2",
+    )
+    .bind(merchant_id)
+    .bind(idempotency_key)
+    .fetch_optional(db)
+    .await
+}
+
 pub async fn withdrawals_by_merchant(
     db: &PgPool,
     merchant_id: Uuid,
@@ -149,7 +208,7 @@ pub async fn withdrawals_by_merchant(
     sqlx::query_as::<_, Withdrawal>(
         "SELECT id, merchant_id, amount_stroops, asset, status, provider,
                 provider_reference, bank_code, account_number, failure_reason,
-                created_at, updated_at
+                idempotency_key, created_at, updated_at
            FROM withdrawals
           WHERE merchant_id = $1
           ORDER BY created_at DESC
@@ -175,7 +234,7 @@ pub async fn withdrawals_by_merchant_cursor(
             sqlx::query_as::<_, Withdrawal>(
                 "SELECT id, merchant_id, amount_stroops, asset, status, provider,
                         provider_reference, bank_code, account_number, failure_reason,
-                        created_at, updated_at
+                        idempotency_key, created_at, updated_at
                    FROM withdrawals
                   WHERE merchant_id = $1
                     AND (created_at, id) < ($2, $3)
@@ -193,7 +252,7 @@ pub async fn withdrawals_by_merchant_cursor(
             sqlx::query_as::<_, Withdrawal>(
                 "SELECT id, merchant_id, amount_stroops, asset, status, provider,
                         provider_reference, bank_code, account_number, failure_reason,
-                        created_at, updated_at
+                        idempotency_key, created_at, updated_at
                    FROM withdrawals
                   WHERE merchant_id = $1
                   ORDER BY created_at DESC, id DESC
