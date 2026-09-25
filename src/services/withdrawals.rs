@@ -200,6 +200,87 @@ pub async fn find_by_idempotency_key(
     .await
 }
 
+/// Reconcile a withdrawal from an asynchronous Paystack transfer webhook.
+///
+/// Paystack transfer events (`transfer.success`, `transfer.failed`,
+/// `transfer.reversed`) arrive after the initial payout call, which in live
+/// mode only returns a `pending` transfer. This applies the terminal status to
+/// the matching withdrawal and, on failure or reversal, refunds the merchant's
+/// available balance exactly once.
+///
+/// The update is guarded so it is idempotent: a withdrawal that is already in a
+/// terminal state is left untouched, and the balance refund only happens on the
+/// transition out of `pending`. This makes duplicate webhook deliveries safe.
+pub async fn reconcile_withdrawal_status(
+    db: &PgPool,
+    provider_reference: &str,
+    status: &str,
+    failure_reason: Option<&str>,
+) -> Result<Option<Withdrawal>, sqlx::Error> {
+    let mut tx = db.begin().await?;
+
+    // Lock the row and read its current state so we can decide whether a refund
+    // is owed. `FOR UPDATE` serialises concurrent webhook deliveries for the
+    // same withdrawal.
+    let current = sqlx::query_as::<_, Withdrawal>(
+        "SELECT id, merchant_id, amount_stroops, asset, status, provider,
+                provider_reference, bank_code, account_number, failure_reason,
+                idempotency_key, created_at, updated_at
+           FROM withdrawals
+          WHERE provider_reference = $1
+          FOR UPDATE",
+    )
+    .bind(provider_reference)
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    let current = match current {
+        Some(w) => w,
+        None => {
+            tx.rollback().await?;
+            return Ok(None);
+        }
+    };
+
+    // Already terminal: nothing to do. Keeps duplicate deliveries idempotent.
+    if current.status != "pending" {
+        tx.rollback().await?;
+        return Ok(Some(current));
+    }
+
+    let refund = matches!(status, "failed" | "reversed");
+
+    if refund {
+        sqlx::query(
+            "UPDATE balances
+                SET available = available + $2, updated_at = now()
+              WHERE merchant_id = $1 AND asset = $3",
+        )
+        .bind(current.merchant_id)
+        .bind(current.amount_stroops)
+        .bind(&current.asset)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    let updated = sqlx::query_as::<_, Withdrawal>(
+        "UPDATE withdrawals
+            SET status = $2, failure_reason = $3, updated_at = now()
+          WHERE id = $1
+          RETURNING id, merchant_id, amount_stroops, asset, status, provider,
+                    provider_reference, bank_code, account_number, failure_reason,
+                    idempotency_key, created_at, updated_at",
+    )
+    .bind(current.id)
+    .bind(status)
+    .bind(failure_reason)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+    Ok(Some(updated))
+}
+
 pub async fn withdrawals_by_merchant(
     db: &PgPool,
     merchant_id: Uuid,
@@ -218,50 +299,4 @@ pub async fn withdrawals_by_merchant(
     .bind(limit)
     .fetch_all(db)
     .await
-}
-
-/// Keyset-paginated variant of [`withdrawals_by_merchant`]. Orders by
-/// `(created_at, id)` DESC so concurrent inserts can't shift rows across
-/// pages the way an OFFSET-based scan can.
-pub async fn withdrawals_by_merchant_cursor(
-    db: &PgPool,
-    merchant_id: Uuid,
-    limit: i64,
-    cursor: Option<crate::pagination::Cursor>,
-) -> Result<Vec<Withdrawal>, sqlx::Error> {
-    match cursor {
-        Some(c) => {
-            sqlx::query_as::<_, Withdrawal>(
-                "SELECT id, merchant_id, amount_stroops, asset, status, provider,
-                        provider_reference, bank_code, account_number, failure_reason,
-                        idempotency_key, created_at, updated_at
-                   FROM withdrawals
-                  WHERE merchant_id = $1
-                    AND (created_at, id) < ($2, $3)
-                  ORDER BY created_at DESC, id DESC
-                  LIMIT $4",
-            )
-            .bind(merchant_id)
-            .bind(c.created_at)
-            .bind(c.id)
-            .bind(limit + 1)
-            .fetch_all(db)
-            .await
-        }
-        None => {
-            sqlx::query_as::<_, Withdrawal>(
-                "SELECT id, merchant_id, amount_stroops, asset, status, provider,
-                        provider_reference, bank_code, account_number, failure_reason,
-                        idempotency_key, created_at, updated_at
-                   FROM withdrawals
-                  WHERE merchant_id = $1
-                  ORDER BY created_at DESC, id DESC
-                  LIMIT $2",
-            )
-            .bind(merchant_id)
-            .bind(limit + 1)
-            .fetch_all(db)
-            .await
-        }
-    }
 }
